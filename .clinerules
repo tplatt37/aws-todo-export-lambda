@@ -1,0 +1,14 @@
+# TypeScript Project Guidelines
+
+## Build and Lint Requirements
+- Always run `npm run lint` before making code changes to ensure code quality
+- Always run `npm run build` after making changes to verify the project compiles successfully
+- If creating CloudFormation YAML or JSON run `cfn-lint filename.yaml` to check for correctness
+- Run both commands whenever working with TypeScript files (.ts, .tsx)
+- If lint errors are found, fix them before proceeding
+- If build fails, resolve compilation errors before continuing
+
+## Development Workflow
+- Lint → Edit → Build → Test cycle for all TypeScript changes
+- Use `npm run lint -- --fix` to auto-fix linting issues when possible
+
