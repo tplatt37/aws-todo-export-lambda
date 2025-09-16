@@ -22,9 +22,9 @@ Parameters:
 
 Globals:
   Function:
-    Timeout: 300
+    Timeout: 120 
     MemorySize: 512
-    Runtime: nodejs18.x
+    Runtime: nodejs22.x
     Architectures:
       - x86_64
 

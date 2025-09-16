@@ -1,4 +1,4 @@
-import { SQSEvent, SQSHandler } from 'aws-lambda';
+import { Handler } from 'aws-lambda';
 import { DynamoDBClient, ScanCommand, ScanCommandOutput, AttributeValue } from '@aws-sdk/client-dynamodb';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { SNSClient, PublishCommand } from '@aws-sdk/client-sns';
@@ -183,11 +183,13 @@ async function exportTodoItems(): Promise<ExportResult> {
 }
 
 /**
- * Lambda handler function triggered by SQS messages
+ * Lambda handler function that supports both SQS events and manual invocation
  */
-export const handler: SQSHandler = async (event: SQSEvent) => {
+export const handler: Handler = async (event: any) => {
   console.log('Lambda function started');
-  console.log(`Processing ${event.Records.length} SQS messages`);
+  console.log('Event received:', JSON.stringify(event, null, 2));
+  console.log('Event type:', typeof event);
+  console.log('Event keys:', event ? Object.keys(event) : 'event is null/undefined');
   
   // Validate environment variables
   if (!env.S3_BUCKET_NAME) {
@@ -200,28 +202,79 @@ export const handler: SQSHandler = async (event: SQSEvent) => {
     throw new Error('SNS_TOPIC_ARN environment variable is required');
   }
   
-  // Process each SQS message
-  for (const record of event.Records) {
-    console.log(`Processing message: ${record.messageId}`);
-    console.log(`Message body: ${record.body}`);
+  // Check if this is an SQS event or manual invocation
+  const isSQSEvent = event && event.Records && Array.isArray(event.Records) && event.Records.length > 0;
+  
+  if (isSQSEvent) {
+    console.log(`Processing ${event.Records.length} SQS messages`);
+    
+    // Process each SQS message
+    for (const record of event.Records) {
+      console.log(`Processing message: ${record.messageId}`);
+      console.log(`Message body: ${record.body}`);
+      
+      try {
+        const result = await exportTodoItems();
+        
+        if (result.success) {
+          console.log(`Export completed successfully: ${result.fileName}`);
+        } else {
+          console.error(`Export failed: ${result.error}`);
+          // In a production environment, you might want to send the message to a DLQ
+          // or implement retry logic here
+        }
+        
+      } catch (error) {
+        console.error(`Error processing message ${record.messageId}:`, error);
+        // Re-throw to let Lambda handle the error and potentially retry
+        throw error;
+      }
+    }
+  } else {
+    console.log('Manual invocation detected - running export directly');
     
     try {
       const result = await exportTodoItems();
       
       if (result.success) {
         console.log(`Export completed successfully: ${result.fileName}`);
+        return {
+          statusCode: 200,
+          body: JSON.stringify({
+            message: 'Export completed successfully',
+            fileName: result.fileName,
+            downloadUrl: result.downloadUrl
+          })
+        };
       } else {
         console.error(`Export failed: ${result.error}`);
-        // In a production environment, you might want to send the message to a DLQ
-        // or implement retry logic here
+        return {
+          statusCode: 500,
+          body: JSON.stringify({
+            message: 'Export failed',
+            error: result.error
+          })
+        };
       }
       
     } catch (error) {
-      console.error(`Error processing message ${record.messageId}:`, error);
-      // Re-throw to let Lambda handle the error and potentially retry
-      throw error;
+      console.error('Error during manual export:', error);
+      return {
+        statusCode: 500,
+        body: JSON.stringify({
+          message: 'Export failed with exception',
+          error: error instanceof Error ? error.message : 'Unknown error occurred'
+        })
+      };
     }
   }
   
   console.log('Lambda function completed');
+  
+  return {
+    statusCode: 200,
+    body: JSON.stringify({
+      message: 'All SQS messages processed successfully'
+    })
+  };
 };

@@ -110,7 +110,9 @@ The function includes a custom IAM policy with the following permissions:
 
 ## Usage
 
-### Triggering an Export
+The Lambda function supports two invocation methods:
+
+### 1. SQS Queue Trigger (Production)
 
 Send a message to your configured SQS queue. The message content can be anything - the Lambda function will process any message as a trigger to start the export process.
 
@@ -120,6 +122,20 @@ aws sqs send-message \
   --queue-url https://sqs.us-east-1.amazonaws.com/123456789012/todo-export-queue \
   --message-body "Start todo export"
 ```
+
+### 2. Manual Invocation (Testing)
+
+You can also invoke the Lambda function directly from the AWS Console or CLI for testing purposes. The function will automatically detect manual invocation and run the export process directly.
+
+Example using AWS CLI:
+```bash
+aws lambda invoke \
+  --function-name your-function-name \
+  --payload '{}' \
+  response.json
+```
+
+Or use the "Test" button in the AWS Lambda Console with any test event.
 
 ### Export Process
 
