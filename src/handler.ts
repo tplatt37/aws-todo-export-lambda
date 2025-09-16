@@ -1,6 +1,7 @@
 import { Handler } from 'aws-lambda';
 import { DynamoDBClient, ScanCommand, ScanCommandOutput, AttributeValue } from '@aws-sdk/client-dynamodb';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { SNSClient, PublishCommand } from '@aws-sdk/client-sns';
 import { unmarshall } from '@aws-sdk/util-dynamodb';
 import { TodoItem, ExportResult, EnvironmentVariables } from './types';
@@ -89,7 +90,7 @@ function convertToCSV(items: TodoItem[]): string {
 /**
  * Uploads CSV content to S3 bucket
  */
-async function uploadToS3(csvContent: string): Promise<{ key: string; downloadUrl: string }> {
+async function uploadToS3(csvContent: string): Promise<string> {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const key = `todo-export-${timestamp}.csv`;
   
@@ -105,26 +106,51 @@ async function uploadToS3(csvContent: string): Promise<{ key: string; downloadUr
   
   await s3Client.send(command);
   
-  const downloadUrl = `https://${env.S3_BUCKET_NAME}.s3.amazonaws.com/${key}`;
-  console.log(`CSV uploaded successfully. Download URL: ${downloadUrl}`);
+  console.log(`CSV uploaded successfully to S3 key: ${key}`);
   
-  return { key, downloadUrl };
+  return key;
 }
 
 /**
- * Sends notification via SNS with download link
+ * Generates a pre-signed URL for downloading the S3 object with 5-minute expiration
  */
-async function sendNotification(fileName: string, downloadUrl: string): Promise<void> {
+async function generatePresignedUrl(key: string): Promise<string> {
+  console.log(`Generating pre-signed URL for S3 key: ${key}`);
+  
+  const command = new GetObjectCommand({
+    Bucket: env.S3_BUCKET_NAME,
+    Key: key
+  });
+  
+  const presignedUrl = await getSignedUrl(s3Client, command, { 
+    expiresIn: 300 // 5 minutes = 300 seconds
+  });
+  
+  console.log(`Pre-signed URL generated successfully (expires in 5 minutes)`);
+  
+  return presignedUrl;
+}
+
+/**
+ * Sends notification via SNS with pre-signed download link
+ */
+async function sendNotification(fileName: string, presignedUrl: string): Promise<void> {
+  const expirationTime = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes from now
+  
   const message = {
     subject: 'Todo Export Complete',
     message: `Your todo export has been completed successfully.
-    
+
 File: ${fileName}
-Download URL: ${downloadUrl}
+Download URL: ${presignedUrl}
+
+⚠️  IMPORTANT: This download link expires at ${expirationTime.toISOString()} (5 minutes from generation).
+Please download the file promptly.
 
 The export contains all items from your todo list in CSV format.`,
-    downloadUrl,
+    downloadUrl: presignedUrl,
     fileName,
+    expiresAt: expirationTime.toISOString(),
     timestamp: new Date().toISOString()
   };
   
@@ -161,16 +187,19 @@ async function exportTodoItems(): Promise<ExportResult> {
     const csvContent = convertToCSV(todoItems);
     
     // Step 3: Upload to S3
-    const { key, downloadUrl } = await uploadToS3(csvContent);
+    const key = await uploadToS3(csvContent);
     
-    // Step 4: Send SNS notification
-    await sendNotification(key, downloadUrl);
+    // Step 4: Generate pre-signed URL
+    const presignedUrl = await generatePresignedUrl(key);
+    
+    // Step 5: Send SNS notification
+    await sendNotification(key, presignedUrl);
     
     return {
       success: true,
       fileName: key,
       s3Key: key,
-      downloadUrl
+      downloadUrl: presignedUrl
     };
     
   } catch (error) {
